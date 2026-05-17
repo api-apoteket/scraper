@@ -48,7 +48,7 @@ services:
         max-file: "3"
 
   scraper:
-    image: ghcr.io/api-apoteket/scraper:latest
+    image: ghcr.io/blixten85/scraper:latest
     container_name: scraper
     restart: unless-stopped
     security_opt:
