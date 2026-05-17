@@ -17,7 +17,7 @@ import random
 import signal
 from io import StringIO
 from urllib.parse import urljoin
-from playwright.async_api import async_playwright
+from playwright.async_api import async_playwright, Error as PlaywrightError
 from playwright_stealth import stealth_async
 from flask import Flask, Response, request, jsonify
 import threading
@@ -168,7 +168,7 @@ def reinit_db_pool():
     if old:
         try:
             old.closeall()
-        except Exception as e:
+        except psycopg2.Error as e:
             logger.warning(f"Error closing old db pool: {e}")
     init_db_pool()
 
@@ -357,7 +357,7 @@ async def accept_cookies(page):
                 await btn.click()
                 await asyncio.sleep(1.5)
                 return True
-        except Exception as e:
+        except PlaywrightError as e:
             logger.debug(f"Cookie button '{text}' not clickable: {e}")
     return False
 
@@ -398,7 +398,7 @@ async def extract_product(page, element, config):
             return None
 
         return {'url': url, 'title': title[:200], 'price': price, 'site_config_id': config['id']}
-    except Exception as e:
+    except PlaywrightError as e:
         logger.debug(f"Extraction error: {e}")
         return None
 
@@ -415,7 +415,7 @@ async def scrape_page_with_retry(context, url, max_retries=3, use_stealth=False)
             page.set_default_timeout(30000)
             await page.wait_for_timeout(random.randint(2000, 5000))
             return page
-        except Exception as e:
+        except PlaywrightError as e:
             if page:
                 await page.close()
             if attempt < max_retries - 1:
@@ -426,6 +426,7 @@ async def scrape_page_with_retry(context, url, max_retries=3, use_stealth=False)
             else:
                 logger.error(f"All retries failed for {url}: {e}")
                 return None
+
     return None
 
 
@@ -495,7 +496,7 @@ async def scrape_site(context, config, page_sem=None):
                                 link = link.rstrip('/')
                                 if link not in visited:
                                     queue.append(link)
-                        except Exception as e:
+                        except PlaywrightError as e:
                             logger.debug(f"Pagination selector failed: {e}")
 
                     await _infinite_scroll(page)
@@ -515,7 +516,7 @@ async def scrape_site(context, config, page_sem=None):
                             new_count += 1
 
                     logger.info(f"  → {new_count} new (total: {products_found})")
-                except Exception as e:
+                except PlaywrightError as e:
                     logger.error(f"Error scraping {url}: {e}")
                     stats['errors'] += 1
                 finally:
@@ -584,7 +585,7 @@ async def scrape_site(context, config, page_sem=None):
                     await asyncio.sleep(random.uniform(3, 7))
 
             logger.info(f"Done with {config['name']}: {products_found} products")
-        except Exception as e:
+        except PlaywrightError as e:
             logger.error(f"Error in {config['name']}: {e}")
             stats['errors'] += 1
         finally:
@@ -640,7 +641,7 @@ async def flush_buffer():
             else:
                 stats['products'] += 1
                 
-        except Exception as e:
+        except psycopg2.Error as e:
             logger.error(f"DB error: {e}")
             stats['errors'] += 1
     
@@ -724,7 +725,7 @@ async def scraper_loop():
         scraping_active = True
         try:
             await run_scraper()
-        except Exception as e:
+        except (PlaywrightError, psycopg2.Error, OSError) as e:
             logger.error(f"Scraping failed: {e}")
         finally:
             scraping_active = False
@@ -786,7 +787,7 @@ def create_config():
     except psycopg2.errors.UniqueViolation:
         conn.rollback()
         return jsonify({'status': 'error', 'message': 'Name already exists'}), 400
-    except Exception as e:
+    except psycopg2.Error as e:
         conn.rollback()
         logger.error(f"Create config error: {e}")
         return jsonify({'status': 'error', 'message': 'Internal server error'}), 500
@@ -826,7 +827,7 @@ def update_config(config_id):
         ))
         conn.commit()
         return jsonify({'status': 'success'})
-    except Exception as e:
+    except psycopg2.Error as e:
         conn.rollback()
         logger.error(f"Update config error: {e}")
         return jsonify({'status': 'error', 'message': 'Internal server error'}), 500
@@ -843,7 +844,7 @@ def delete_config(config_id):
         cur.execute("DELETE FROM scraper_config WHERE id = %s", (config_id,))
         conn.commit()
         return jsonify({'status': 'success'})
-    except Exception as e:
+    except psycopg2.Error as e:
         conn.rollback()
         logger.error(f"Delete config error: {e}")
         return jsonify({'status': 'error', 'message': 'Internal server error'}), 500
@@ -874,8 +875,9 @@ def test_scrape_sync():
                     return {'status': 'success', 'elements_found': len(elements), 'preview': products}
                 finally:
                     await page.close()
-        except Exception as e:
-            return {'status': 'error', 'message': str(e)}
+        except PlaywrightError as e:
+            logger.error("Test scrape failed: %s", e)
+            return {'status': 'error', 'message': 'Test scrape failed'}
         finally:
             if browser:
                 await browser.close()
@@ -1086,7 +1088,7 @@ def detect_selectors():
                     await page.goto(url, timeout=60000, wait_until="domcontentloaded")
                     try:
                         await page.wait_for_load_state("networkidle", timeout=10000)
-                    except Exception as e:
+                    except PlaywrightError as e:
                         logger.debug("networkidle timeout during detect, continuing: %s", e)
                     await accept_cookies(page)
                     await asyncio.sleep(2)
@@ -1106,7 +1108,7 @@ def detect_selectors():
                     }
                 finally:
                     await page.close()
-        except Exception as e:
+        except PlaywrightError as e:
             logger.error("Detection failed: %s", e)
             return {'status': 'error', 'message': 'Detection failed'}
         finally:
@@ -1163,7 +1165,7 @@ def update_setting(key):
         """, (key, str(value)))
         conn.commit()
         return jsonify({'status': 'success'})
-    except Exception as e:
+    except psycopg2.Error as e:
         conn.rollback()
         logger.error(f"Update setting error: {e}")
         return jsonify({'status': 'error', 'message': 'Failed to update setting'}), 500
@@ -1187,14 +1189,14 @@ def change_db_password():
         write_credential('db_password', new_pw)  # lgtm[py/clear-text-storage-sensitive-data]
         reinit_db_pool()
         return jsonify({'status': 'success'})
-    except Exception as e:
+    except psycopg2.Error as e:
         conn.rollback()
         logger.error(f"Change password error: {e}")
         return jsonify({'status': 'error', 'message': 'Failed to update password'}), 500
     finally:
         try:
             return_db(conn)
-        except Exception as e:
+        except psycopg2.Error as e:
             logger.debug("Failed to return connection: %s", e)
 
 
@@ -1217,14 +1219,14 @@ def change_db_username():
         write_credential('db_user', new_user)
         reinit_db_pool()
         return jsonify({'status': 'success'})
-    except Exception as e:
+    except psycopg2.Error as e:
         conn.rollback()
         logger.error(f"Change username error: {e}")
         return jsonify({'status': 'error', 'message': 'Failed to update username'}), 500
     finally:
         try:
             return_db(conn)
-        except Exception as e:
+        except psycopg2.Error as e:
             logger.debug("Failed to return connection: %s", e)
 
 
@@ -1239,7 +1241,7 @@ def trigger_scrape():
         scraping_active = True
         try:
             asyncio.run(run_scraper())
-        except Exception as e:
+        except (PlaywrightError, psycopg2.Error, OSError) as e:
             logger.error(f"Scrape thread failed: {e}")
         finally:
             scraping_active = False
