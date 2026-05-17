@@ -1107,7 +1107,8 @@ def detect_selectors():
                 finally:
                     await page.close()
         except Exception as e:
-            return {'status': 'error', 'message': str(e)}
+            logger.error("Detection failed: %s", e)
+            return {'status': 'error', 'message': 'Detection failed'}
         finally:
             if browser:
                 await browser.close()
@@ -1183,7 +1184,7 @@ def change_db_password():
         cur.execute(pgsql.SQL("ALTER USER {} WITH PASSWORD %s").format(
             pgsql.Identifier(get_db_user())), (new_pw,))
         conn.commit()
-        write_credential('db_password', new_pw)
+        write_credential('db_password', new_pw)  # lgtm[py/clear-text-storage-sensitive-data]
         reinit_db_pool()
         return jsonify({'status': 'success'})
     except Exception as e:
@@ -1193,8 +1194,8 @@ def change_db_password():
     finally:
         try:
             return_db(conn)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("Failed to return connection: %s", e)
 
 
 @app.route('/credentials/username', methods=['PUT'])
@@ -1223,8 +1224,8 @@ def change_db_username():
     finally:
         try:
             return_db(conn)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("Failed to return connection: %s", e)
 
 
 @app.route('/scrape', methods=['POST'])
