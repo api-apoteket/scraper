@@ -52,10 +52,10 @@ def get_db():
     conn = db_pool.getconn()
     try:
         conn.cursor().execute("SELECT 1")
-    except Exception:
+    except psycopg2.Error:
         try:
             db_pool.putconn(conn, close=True)
-        except Exception as cleanup_err:
+        except psycopg2.Error as cleanup_err:
             logger.debug("Failed to discard stale connection: %s", cleanup_err)
         conn = db_pool.getconn()
     return conn
@@ -63,7 +63,7 @@ def get_db():
 def return_db(conn):
     try:
         conn.rollback()
-    except Exception:
+    except psycopg2.Error:
         db_pool.putconn(conn, close=True)
         return
     db_pool.putconn(conn)
@@ -108,7 +108,7 @@ def health():
         conn = get_db()
         conn.cursor().execute("SELECT 1")
         return {"status": "healthy", "database": "connected", "timestamp": datetime.utcnow().isoformat()}
-    except Exception:
+    except psycopg2.Error:
         return {"status": "unhealthy", "error": "Database connection failed"}
     finally:
         if conn:
@@ -168,7 +168,7 @@ def set_product_description(product_id: int, payload: ProductDescriptionUpdate):
         return {"status": "success", "product_id": product_id}
     except HTTPException:
         raise
-    except Exception as e:
+    except psycopg2.Error as e:
         conn.rollback()
         logger.error(f"Update description error: {e}")
         raise HTTPException(status_code=500, detail="Failed to update description")
