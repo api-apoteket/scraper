@@ -185,8 +185,12 @@ def update_setting(key):
         return jsonify({'status': 'error', 'message': 'Internal server error'}), 503
 
 
+_ALLOWED_CREDENTIAL_PATHS = frozenset(['password', 'username'])
+
 @app.route('/api/credentials/<path:subpath>', methods=['PUT'])
 def update_credential(subpath):
+    if subpath not in _ALLOWED_CREDENTIAL_PATHS:
+        return jsonify({'status': 'error', 'message': 'Not found'}), 404
     try:
         resp = engine_request('PUT', f'/credentials/{subpath}', json=request.json)
         return jsonify(resp.json()), resp.status_code
