@@ -18,7 +18,7 @@ import signal
 from io import StringIO
 from urllib.parse import urljoin
 from playwright.async_api import async_playwright, Error as PlaywrightError
-from playwright_stealth import stealth_async
+from playwright_stealth import Stealth
 from flask import Flask, Response, request, jsonify
 import threading
 import psycopg2
@@ -410,7 +410,7 @@ async def scrape_page_with_retry(context, url, max_retries=3, use_stealth=False)
         try:
             page = await context.new_page()
             if use_stealth:
-                await stealth_async(page)
+                await Stealth().apply_stealth_async(page)
             await page.goto(url, timeout=60000, wait_until="domcontentloaded")
             page.set_default_timeout(30000)
             await page.wait_for_timeout(random.randint(2000, 5000))
@@ -1083,7 +1083,7 @@ def detect_selectors():
             async with async_playwright() as p:
                 browser = await p.chromium.launch(headless=True, args=BROWSER_ARGS)
                 page = await browser.new_page()
-                await stealth_async(page)
+                await Stealth().apply_stealth_async(page)
                 try:
                     await page.goto(url, timeout=60000, wait_until="domcontentloaded")
                     try:
