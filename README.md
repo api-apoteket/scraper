@@ -54,8 +54,8 @@ docker compose up -d
 docker compose logs postgres   # → database password
 docker compose logs scraper    # → API key
 
-# 6. Open WebUI
-# http://localhost:3000
+# 6. Open WebUI (via reverse proxy)
+# https://scraper.example.com
 ```
 
 ---
@@ -65,7 +65,7 @@ docker compose logs scraper    # → API key
 | Container | Port | Description |
 |-----------|------|-------------|
 | `postgres` | 5432 (internal) | PostgreSQL database |
-| `scraper` | 3000 | Web UI, API, scraper engine, alerts |
+| `scraper` | reverse proxy | Web UI, API, scraper engine, alerts — accessed via `scraper.${DOMAIN}` |
 
 ---
 
@@ -94,19 +94,19 @@ cat /path/to/docker/data/scraper/credentials/api_key
 
 ```bash
 # Get all products
-curl -H "X-API-Key: ${API_KEY}" http://localhost:8000/products
+curl -H "X-API-Key: ${API_KEY}" https://scraper.${DOMAIN}/products
 
 # Search products
-curl -H "X-API-Key: ${API_KEY}" "http://localhost:8000/products?search=RTX"
+curl -H "X-API-Key: ${API_KEY}" "https://scraper.${DOMAIN}/products?search=RTX"
 
 # Get price drops
-curl -H "X-API-Key: ${API_KEY}" "http://localhost:8000/deals?min_drop_percent=10"
+curl -H "X-API-Key: ${API_KEY}" "https://scraper.${DOMAIN}/deals?min_drop_percent=10"
 
 # Export to CSV
-curl -H "X-API-Key: ${API_KEY}" http://localhost:8000/export/csv > products.csv
+curl -H "X-API-Key: ${API_KEY}" https://scraper.${DOMAIN}/export/csv > products.csv
 ```
 
-API Documentation: http://localhost:8000/docs
+API Documentation: `https://scraper.${DOMAIN}/docs`
 
 ---
 
@@ -171,7 +171,7 @@ sudo chown -R 999:999 ${DOCKER}/scraper/postgres
 ### API returns 401 Unauthorized
 
 ```bash
-curl -H "X-API-Key: ${API_KEY}" http://localhost:8000/products
+curl -H "X-API-Key: ${API_KEY}" https://scraper.${DOMAIN}/products
 ```
 
 ### No products are scraped
