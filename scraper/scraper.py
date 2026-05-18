@@ -273,6 +273,7 @@ def init_db():
     cur.execute("ALTER TABLE scraper_config ADD COLUMN IF NOT EXISTS use_stealth INTEGER DEFAULT 0")
     cur.execute("ALTER TABLE scraper_config ADD COLUMN IF NOT EXISTS proxy_url TEXT DEFAULT ''")
     cur.execute("ALTER TABLE scraper_config ADD COLUMN IF NOT EXISTS exclude_link_pattern TEXT DEFAULT ''")
+    cur.execute("ALTER TABLE scraper_config ADD COLUMN IF NOT EXISTS url_scope TEXT DEFAULT ''")
 
     cur.execute("ALTER TABLE products ADD COLUMN IF NOT EXISTS description TEXT")
     cur.execute("ALTER TABLE products ADD COLUMN IF NOT EXISTS description_why TEXT")
@@ -467,62 +468,83 @@ async def scrape_site(context, config, page_sem=None):
 
     if config.get('pagination_type') == 'subcategory':
         visited = set()
+        queued = set(start_urls)
         queue = list(start_urls)
         seen_product_urls = set()
+        url_scope = (config.get('url_scope') or '').strip()
+        max_pages = config.get('max_pages', 10)
 
         while queue and not shutdown_event.is_set():
-            url = queue.pop(0)
-            if url in visited:
+            base_url = queue.pop(0)
+            if base_url in visited:
                 continue
-            visited.add(url)
+            visited.add(base_url)
 
-            async with _page_sem:
-                logger.info(f"  Category: {url.split('/')[-1]}")
-                page = await scrape_page_with_retry(context, url, use_stealth=config.get('use_stealth', 0))
-                if not page:
-                    continue
+            for page_num in range(1, max_pages + 1):
+                if shutdown_event.is_set():
+                    break
+                if page_num == 1:
+                    url = base_url
+                elif '?' in base_url:
+                    url = f"{base_url}&page={page_num}"
+                else:
+                    url = f"{base_url}?page={page_num}"
 
-                try:
-                    await _cookies_once(page)
+                async with _page_sem:
+                    label = base_url.split('/')[-1]
+                    logger.info(f"  Category: {label}" + (f" (p{page_num})" if page_num > 1 else ""))
+                    page = await scrape_page_with_retry(context, url, use_stealth=config.get('use_stealth', 0))
+                    if not page:
+                        break
 
-                    # Discover subcategory links from this page
-                    if config.get('pagination_selector'):
-                        try:
-                            links = await page.eval_on_selector_all(
-                                config['pagination_selector'],
-                                "els => [...new Set(els.map(e => e.href))]"
-                            )
-                            for link in links:
-                                link = link.rstrip('/')
-                                if link not in visited:
-                                    queue.append(link)
-                        except PlaywrightError as e:
-                            logger.debug(f"Pagination selector failed: {e}")
+                    page_new = 0
+                    try:
+                        await _cookies_once(page)
 
-                    await _infinite_scroll(page)
-                    elements = await page.query_selector_all(config['product_selector'])
-                    logger.info(f"  {len(elements)} elements after scroll")
+                        if page_num == 1 and config.get('pagination_selector'):
+                            try:
+                                links = await page.eval_on_selector_all(
+                                    config['pagination_selector'],
+                                    "els => [...new Set(els.map(e => e.href))]"
+                                )
+                                for link in links:
+                                    link = link.rstrip('/')
+                                    if url_scope and url_scope not in link:
+                                        continue
+                                    if link not in visited and link not in queued:
+                                        queued.add(link)
+                                        queue.append(link)
+                            except PlaywrightError as e:
+                                logger.debug(f"Pagination selector failed: {e}")
 
-                    new_count = 0
-                    for elem in elements:
-                        product = await extract_product(page, elem, config)
-                        if product and product['url'] not in seen_product_urls:
-                            seen_product_urls.add(product['url'])
-                            async with write_lock:
-                                write_buffer.append((product, False))
-                                if len(write_buffer) >= 10:
-                                    await flush_buffer()
-                            products_found += 1
-                            new_count += 1
+                        await _infinite_scroll(page)
+                        elements = await page.query_selector_all(config['product_selector'])
+                        logger.info(f"  {len(elements)} elements after scroll")
 
-                    logger.info(f"  → {new_count} new (total: {products_found})")
-                except PlaywrightError as e:
-                    logger.error(f"Error scraping {url}: {e}")
-                    stats['errors'] += 1
-                finally:
-                    await page.close()
+                        for elem in elements:
+                            product = await extract_product(page, elem, config)
+                            if product and product['url'] not in seen_product_urls:
+                                seen_product_urls.add(product['url'])
+                                async with write_lock:
+                                    write_buffer.append((product, False))
+                                    if len(write_buffer) >= 10:
+                                        await flush_buffer()
+                                products_found += 1
+                                page_new += 1
 
-            await asyncio.sleep(random.uniform(2, 4))
+                        logger.info(f"  → {page_new} new (total: {products_found})")
+
+                    except PlaywrightError as e:
+                        logger.error(f"Error scraping {url}: {e}")
+                        stats['errors'] += 1
+                        break
+                    finally:
+                        await page.close()
+
+                if page_new == 0:
+                    break
+
+                await asyncio.sleep(random.uniform(2, 4))
 
         logger.info(f"Done with {config['name']}: {products_found} products")
 
@@ -764,8 +786,8 @@ def create_config():
             INSERT INTO scraper_config
             (name, base_url, product_selector, title_selector, price_selector, link_selector,
              pagination_type, pagination_selector, max_pages, min_price, max_price, categories,
-             use_stealth, proxy_url, exclude_link_pattern)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+             use_stealth, proxy_url, exclude_link_pattern, url_scope)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             RETURNING id
         """, (
             data['name'], data['base_url'],
@@ -779,7 +801,8 @@ def create_config():
             json.dumps(data.get('categories', [])),
             1 if data.get('use_stealth') else 0,
             data.get('proxy_url', ''),
-            data.get('exclude_link_pattern', '')
+            data.get('exclude_link_pattern', ''),
+            data.get('url_scope', '')
         ))
         config_id = cur.fetchone()[0]
         conn.commit()
@@ -807,7 +830,8 @@ def update_config(config_id):
                 price_selector = %s, link_selector = %s, pagination_type = %s,
                 pagination_selector = %s, max_pages = %s, enabled = %s,
                 min_price = %s, max_price = %s, categories = %s,
-                use_stealth = %s, proxy_url = %s, exclude_link_pattern = %s, updated_at = NOW()
+                use_stealth = %s, proxy_url = %s, exclude_link_pattern = %s,
+                url_scope = %s, updated_at = NOW()
             WHERE id = %s
         """, (
             data['name'], data['base_url'],
@@ -823,6 +847,7 @@ def update_config(config_id):
             1 if data.get('use_stealth') else 0,
             data.get('proxy_url', ''),
             data.get('exclude_link_pattern', ''),
+            data.get('url_scope', ''),
             config_id
         ))
         conn.commit()
