@@ -28,11 +28,18 @@ def read_secret(env_var, default=""):
             return f.read().strip()
     return os.getenv(env_var, default)
 
+def _read_credential(name):
+    path = os.path.join(os.getenv("CREDENTIALS_DIR", "/credentials"), name)
+    if os.path.exists(path):
+        with open(path) as f:
+            return f.read().strip()
+    return ""
+
 API_KEY = None
 def get_api_key():
     global API_KEY
     if API_KEY is None:
-        API_KEY = read_secret("API_KEY")
+        API_KEY = read_secret("API_KEY") or _read_credential("api_key")
     return API_KEY
 
 def _validate_path(path):
