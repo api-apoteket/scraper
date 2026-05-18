@@ -74,8 +74,4 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
-    labels:
-      swag: "enable"
-      swag_address: "scraper"
-      swag_port: "3000"
-      swag_url: "scraper.${DOMAIN}"
+
