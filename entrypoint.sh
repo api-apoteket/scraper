@@ -14,4 +14,6 @@
 chmod 700 /credentials 2>/dev/null || true
 chmod 600 /credentials/* 2>/dev/null || true
 
+playwright install chromium
+
 exec supervisord -c /app/supervisord.conf
