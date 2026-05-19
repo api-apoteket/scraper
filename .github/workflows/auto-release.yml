@@ -23,11 +23,35 @@ jobs:
 
       - name: Bump version and create tag
         id: tag
-        uses: mathieudutour/github-tag-action@a22cf08638b34d5badda920f9daf6e72c477b07b  # v6.2
-        with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          default_bump: patch
-          release_branches: main
+        run: |
+          git fetch --tags
+          LATEST=$(git tag -l 'v*' | sort -V | tail -1)
+          if [ -z "$LATEST" ]; then
+            NEW_TAG="v0.1.0"
+            CHANGELOG="Initial release"
+          else
+            COMMITS=$(git log "${LATEST}..HEAD" --pretty=format:"%s" --no-merges)
+            if echo "$COMMITS" | grep -qE "BREAKING[- ]CHANGE|^[a-z]+(\(.+\))?!:"; then
+              BUMP="major"
+            elif echo "$COMMITS" | grep -qE "^feat(\(.+\))?:"; then
+              BUMP="minor"
+            else
+              BUMP="patch"
+            fi
+            MAJOR=$(echo "$LATEST" | sed 's/v//' | cut -d. -f1)
+            MINOR=$(echo "$LATEST" | sed 's/v//' | cut -d. -f2)
+            PATCH=$(echo "$LATEST" | sed 's/v//' | cut -d. -f3)
+            case $BUMP in
+              major) NEW_TAG="v$((MAJOR+1)).0.0" ;;
+              minor) NEW_TAG="v${MAJOR}.$((MINOR+1)).0" ;;
+              patch) NEW_TAG="v${MAJOR}.${MINOR}.$((PATCH+1))" ;;
+            esac
+            CHANGELOG=$(git log "${LATEST}..HEAD" --pretty=format:"* %s" --no-merges)
+          fi
+          git tag "$NEW_TAG"
+          git push origin "$NEW_TAG"
+          echo "new_tag=$NEW_TAG" >> "$GITHUB_OUTPUT"
+          { echo "changelog<<EOF"; echo "$CHANGELOG"; echo "EOF"; } >> "$GITHUB_OUTPUT"
 
       - name: Create release
         uses: softprops/action-gh-release@b4309332981a82ec1c5618f44dd2e27cc8bfbfda  # v3
